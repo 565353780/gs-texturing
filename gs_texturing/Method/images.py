@@ -6,6 +6,157 @@ from pathlib import Path
 from typing import Tuple
 from tqdm import tqdm, trange
 
+def catImages(
+    image_folder_path_list: list,
+    save_image_folder_path: str,
+) -> bool:
+    """
+    将所有文件夹中名称相同的图片文件按照最接近16:9比例的方式拼接起来
+    
+    Args:
+        image_folder_path_list: 图片文件夹路径列表
+        save_image_folder_path: 保存拼接后图片的文件夹路径
+        
+    Returns:
+        bool: 是否成功
+    """
+    try:
+        if not image_folder_path_list:
+            print("错误: 图片文件夹列表为空")
+            return False
+        
+        # 支持的图片格式
+        image_extensions = {'.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.tif'}
+        
+        # 检查所有文件夹是否存在
+        valid_folders = []
+        for folder_path in image_folder_path_list:
+            if not os.path.exists(folder_path):
+                print(f"警告: 文件夹不存在 {folder_path}，跳过")
+                continue
+            valid_folders.append(folder_path)
+        
+        if not valid_folders:
+            print("错误: 没有可用的图片文件夹")
+            return False
+        
+        # 收集所有文件夹中的图片文件名
+        all_image_files = {}  # {folder_path: set of filenames}
+        for folder_path in valid_folders:
+            image_files = set()
+            for file in os.listdir(folder_path):
+                if Path(file).suffix.lower() in image_extensions:
+                    image_files.add(file)
+            all_image_files[folder_path] = image_files
+        
+        # 找到所有文件夹中都存在的图片文件名（交集）
+        common_image_names = None
+        for folder_path, image_files in all_image_files.items():
+            if common_image_names is None:
+                common_image_names = image_files.copy()
+            else:
+                common_image_names &= image_files
+        
+        if not common_image_names:
+            print("错误: 没有在所有文件夹中都存在的图片文件")
+            return False
+        
+        # 创建保存文件夹
+        os.makedirs(save_image_folder_path, exist_ok=True)
+        
+        # 读取第一张图片获取尺寸（假设所有图片尺寸一致）
+        first_folder = valid_folders[0]
+        first_image_name = sorted(common_image_names)[0]
+        first_image_path = os.path.join(first_folder, first_image_name)
+        first_image = cv2.imread(first_image_path)
+        
+        if first_image is None:
+            print(f"错误: 无法读取图片 {first_image_path}")
+            return False
+        
+        img_height, img_width, channels = first_image.shape
+        
+        # 计算最接近16:9的布局
+        def find_best_16_9_layout(num: int) -> Tuple[int, int]:
+            """找到最接近16:9比例的网格布局"""
+            target_ratio = 16.0 / 9.0
+            best_rows, best_cols = 1, num
+            best_diff = abs((best_cols / best_rows) - target_ratio)
+            
+            # 尝试不同的行数
+            for rows in range(1, num + 1):
+                cols = (num + rows - 1) // rows  # 向上取整
+                if rows * cols < num:
+                    continue
+                
+                ratio = cols / rows
+                diff = abs(ratio - target_ratio)
+                
+                if diff < best_diff:
+                    best_diff = diff
+                    best_rows = rows
+                    best_cols = cols
+            
+            return best_rows, best_cols
+        
+        num_images = len(valid_folders)
+        rows, cols = find_best_16_9_layout(num_images)
+        
+        print('[INFO][images::catImages]')
+        print(f'\t 找到 {len(common_image_names)} 个同名图片文件')
+        print(f'\t 图片布局: {rows}x{cols} (共{num_images}个文件夹)')
+        print(f'\t 开始拼接图片...')
+        
+        # 对每个同名图片进行拼接
+        for image_name in tqdm(sorted(common_image_names)):
+            # 创建输出画布
+            output_width = img_width * cols
+            output_height = img_height * rows
+            output_image = np.zeros((output_height, output_width, channels), dtype=np.uint8)
+            
+            # 从各个文件夹读取同名图片并拼接
+            folder_idx = 0
+            for row in range(rows):
+                for col in range(cols):
+                    if folder_idx >= num_images:
+                        break
+                    
+                    folder_path = valid_folders[folder_idx]
+                    image_path = os.path.join(folder_path, image_name)
+                    image = cv2.imread(image_path)
+                    
+                    if image is None:
+                        print(f"警告: 无法读取图片 {image_path}，跳过")
+                        folder_idx += 1
+                        continue
+                    
+                    # 如果尺寸不一致，调整大小
+                    if image.shape[:2] != (img_height, img_width):
+                        image = cv2.resize(image, (img_width, img_height))
+                    
+                    # 将图片放置到对应位置
+                    y_start = row * img_height
+                    y_end = y_start + img_height
+                    x_start = col * img_width
+                    x_end = x_start + img_width
+                    
+                    output_image[y_start:y_end, x_start:x_end] = image
+                    folder_idx += 1
+                
+                if folder_idx >= num_images:
+                    break
+            
+            # 保存拼接后的图片
+            save_image_path = os.path.join(save_image_folder_path, image_name)
+            cv2.imwrite(save_image_path, output_image)
+        
+        print(f"成功: 已将 {len(common_image_names)} 个同名图片拼接并保存到 {save_image_folder_path}")
+        return True
+        
+    except Exception as e:
+        print(f"错误: 拼接图片时发生异常: {str(e)}")
+        return False
+
 def imagesToVideo(
     image_folder_path: str,
     save_video_file_path: str,

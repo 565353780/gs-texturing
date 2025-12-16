@@ -17,4 +17,4 @@ cd ../diff-gaussian-rasterization-texture
 python setup.py install
 
 cd ..
-python install ./graphdecoviewer
+pip install ./graphdecoviewer
